@@ -1,0 +1,9 @@
+[package]
+name = "adventofcode2019"
+version = "0.1.0"
+authors = ["Warren Jones <warren@pencethren.org>"]
+edition = "2018"
+
+[dependencies]
+structopt = { version = "0.3" }
+
