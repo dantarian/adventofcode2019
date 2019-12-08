@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind, Read};
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::process;
 
 pub fn run(filename: &PathBuf, part2: &bool) -> Result<(), Box<dyn Error>> {
@@ -16,7 +16,12 @@ pub fn run(filename: &PathBuf, part2: &bool) -> Result<(), Box<dyn Error>> {
     let wire1 = build_wire(&vec[0])?;
     let wire2 = build_wire(&vec[1])?;
     let wire_panel = WirePanel::new(wire1, wire2);
-    println!("Result: {}", wire_panel.closest_intersection());
+
+    if *part2 {
+        println!("Result: {}", wire_panel.closest_combined_distance());
+    } else {
+        println!("Result: {}", wire_panel.closest_intersection());
+    }
 
     Ok(())
 }
@@ -28,9 +33,10 @@ fn read<R: Read>(io: R) -> Result<Vec<Vec<String>>, std::io::Error> {
     .collect()
 }
 
-fn build_wire(input: &Vec<String>) -> Result<BTreeSet<Location>, std::io::Error> {
-    let mut set = BTreeSet::new();
+fn build_wire(input: &Vec<String>) -> Result<Wire, std::io::Error> {
+    let mut wire = Wire::new();
     let mut current_location = Location::new(0, 0);
+    let mut distance_travelled = 0;
     for segment in input {
         let (direction, number_str) = segment.split_at(1);
         let number = number_str.parse::<u32>();
@@ -43,13 +49,14 @@ fn build_wire(input: &Vec<String>) -> Result<BTreeSet<Location>, std::io::Error>
                 x => return Err(std::io::Error::new(ErrorKind::InvalidData,
                                                     format!("Unexpected direction: {}", x)))
             };
-            set.insert(current_location);
+            distance_travelled = distance_travelled + 1;
+            wire.add_point(current_location, distance_travelled);
         }
     }
-    Ok(set)
+    Ok(wire)
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Hash, Copy, Clone, Debug)]
 struct Location {
     x: i32,
     y: i32
@@ -95,18 +102,46 @@ impl PartialOrd for Location {
     }
 }
 
+struct Wire {
+    locations: BTreeSet<Location>,
+    distances: HashMap<Location, u32>
+}
+
+impl Wire {
+    fn new() -> Self {
+        Wire { locations: BTreeSet::new(), distances: HashMap::new() }
+    }
+
+    fn add_point(&mut self, location: Location, distance: u32) {
+        self.locations.insert(location.clone());
+        self.distances.insert(location, distance);
+    }
+
+    fn distance(&self, location: &Location) -> u32 {
+        self.distances.get(location).unwrap().clone()
+    }
+}
+
 struct WirePanel {
-    wire1: BTreeSet<Location>,
-    wire2: BTreeSet<Location>
+    wire1: Wire,
+    wire2: Wire
 }
 
 impl WirePanel {
-    fn new(wire1: BTreeSet<Location>, wire2: BTreeSet<Location>) -> Self {
+    fn new(wire1: Wire, wire2: Wire) -> Self {
         WirePanel { wire1: wire1, wire2: wire2 }
     }
 
+    fn intersections(&self) -> Vec<Location> {
+        self.wire1.locations.intersection(&self.wire2.locations).map(|l| l.clone()).collect()
+    }
+
     fn closest_intersection(&self) -> i32 {
-        self.wire1.intersection(&self.wire2).next().unwrap().distance()
+        self.wire1.locations.intersection(&self.wire2.locations).next().unwrap().distance()
+    }
+
+    fn closest_combined_distance(&self) -> u32 {
+        self.intersections().into_iter().map(|l| self.wire1.distance(&l) + self.wire2.distance(&l)).min().unwrap()
     }
 }
 
@@ -133,5 +168,20 @@ mod tests {
 
         let panel = WirePanel::new(wire1, wire2);
         assert_eq!(6, panel.closest_intersection());
+    }
+
+    #[test]
+    fn test_combined_distance() {
+        let wire1 = build_wire(&vec![String::from("R8"), 
+                                     String::from("U5"), 
+                                     String::from("L5"), 
+                                     String::from("D3")]).unwrap();
+        let wire2 = build_wire(&vec![String::from("U7"), 
+                                     String::from("R6"), 
+                                     String::from("D4"), 
+                                     String::from("L4")]).unwrap();
+
+        let panel = WirePanel::new(wire1, wire2);
+        assert_eq!(30, panel.closest_combined_distance());
     }
 }
