@@ -20,4 +20,10 @@ pub enum Command {
         /// The name of the file to be used for input.
         filename: PathBuf,
     },
+
+    /// Run a simple computer.
+    Day2 {
+        /// The name of the file to be used for input.
+        filename: PathBuf,
+    },
 }
