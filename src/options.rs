@@ -26,4 +26,10 @@ pub enum Command {
         /// The name of the file to be used for input.
         filename: PathBuf,
     },
+
+    /// Calculate the Manhattan distance to the closest intersection to the origin
+    Day3 {
+        /// The name of the file to be used for input.
+        filename: PathBuf,
+    },
 }
