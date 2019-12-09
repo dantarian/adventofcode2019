@@ -4,6 +4,7 @@ pub mod options;
 pub mod day1;
 pub mod day2;
 pub mod day3;
+pub mod day4;
 use options::Opt;
 use options::Command;
 
@@ -12,6 +13,7 @@ pub fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
         Command::Day1 { filename } => day1::run_day1(&filename, &opt.part2),
         Command::Day2 { filename } => day2::run(&filename, &opt.part2),
         Command::Day3 { filename } => day3::run(&filename, &opt.part2),
+        Command::Day4 { range_start, range_end } => day4::run(range_start, range_end, &opt.part2),
     }
 }
 

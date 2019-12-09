@@ -32,4 +32,12 @@ pub enum Command {
         /// The name of the file to be used for input.
         filename: PathBuf,
     },
+
+    /// Find possible passcodes.
+    Day4 {
+        /// The start of the range of possible values.
+        range_start: u32,
+        /// The end of the range of possible values.
+        range_end: u32,
+    }
 }
