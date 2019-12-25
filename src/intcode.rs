@@ -1,13 +1,27 @@
-#[derive(Debug)]
-pub struct Computer {
+use std::io::{BufReader, BufWriter, BufRead, Write};
+use std::fmt;
+
+pub struct Computer<'a> {
     memory: Vec<i32>,
     loc: i32,
     running: bool,
+    input: BufReader<Box<dyn BufRead + 'a>>,
+    output: BufWriter<Box<dyn Write + 'a>>,
 }
 
-impl Computer {
-    pub fn new(memory: Vec<i32>) -> Self {
-        Computer { memory: memory, loc: 0, running: true }
+impl<'a> fmt::Debug for Computer<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Memory: {:?} Location: {:?} Running: {:?}", self.memory, self.loc, self.running)
+    }
+}
+
+impl<'a> Computer<'a> {
+    pub fn new<R: BufRead + 'a, W: Write + 'a>(memory: Vec<i32>, input: R, output: W) -> Self {
+        let r_box = Box::new(input);
+        let r_br = BufReader::new(r_box as _);
+        let w_box = Box::new(output);
+        let w_bw = BufWriter::new(w_box as _);
+        Computer { memory: memory, loc: 0, running: true, input: r_br, output: w_bw }
     }
 
     pub fn run(&mut self) -> Result<i32, String> {
@@ -29,7 +43,7 @@ impl Computer {
         };
 
         Instruction::new(instruction_code, self.loc, argument_types, &self.memory)
-            .and_then(|i| i.call(&mut self.memory))
+            .and_then(|i| i.call(&mut self.memory, &mut self.input, &mut self.output))
             .and_then(|result| match result {
                 CallResult::Step(distance) => {
                     self.loc = self.loc + (distance as i32);
@@ -144,6 +158,18 @@ impl Instruction {
                                          Argument::new(address(base_location + 2), argument_types.get(1)),
                                          Argument::new(address(base_location + 3), argument_types.get(2))))
             },
+            3 => {
+                if base_location < 0 || (base_location as usize) + 1 > memory.len() {
+                    return Err(String::from("Tried to read off end of memory."));
+                }
+                Ok(Instruction::Input(Argument::new(address(base_location + 1), argument_types.get(0))))
+            },
+            4 => {
+                if base_location < 0 || (base_location as usize) + 1 > memory.len() {
+                    return Err(String::from("Tried to read off end of memory."));
+                }
+                Ok(Instruction::Output(Argument::new(address(base_location + 1), argument_types.get(0))))
+            },
             99 => Ok(Instruction::Stop),
             x => Err(format!("Unsupported instruction: {}", x))
         }
@@ -159,7 +185,7 @@ impl Instruction {
         }
     }
 
-    fn call(&self, memory: &mut Vec<i32>) -> Result<CallResult, String> {
+    fn call<'a>(&self, memory: &mut Vec<i32>, reader: &mut BufReader<Box<dyn BufRead + 'a>>, writer: &mut BufWriter<Box<dyn Write + 'a>>) -> Result<CallResult, String> {
         match self {
             Instruction::Add(input1, input2, output) => 
                 match (input1.get(memory), input2.get(memory)) {
@@ -175,8 +201,24 @@ impl Instruction {
                     },
                     _ => Err(String::from("Failed to find a referenced value."))
                 },
+            Instruction::Input(output) => {
+                println!("Please provide an input:");
+                let mut buffer = String::new();
+                reader.read_line(&mut buffer).map_err(|err| err.to_string())?;
+                let value: i32 = buffer.trim().parse().map_err(|err: std::num::ParseIntError| err.to_string())?;
+                output.set(memory, value)?;
+                Ok(CallResult::Step(self.length()))
+            },
+            Instruction::Output(input) => {
+                match input.get(memory) {
+                    Some(a) => {
+                        writeln!(writer, "{}", a).map_err(|err| err.to_string())?;
+                        Ok(CallResult::Step(self.length()))
+                    },
+                    _ => Err(String::from("Failed to find a referenced value."))
+                }
+            },
             Instruction::Stop => Ok(CallResult::Stop),
-            _ => Err(String::from("unimplemented"))
         }
     }
 }
@@ -255,7 +297,9 @@ mod tests {
 
     #[test]
     fn test_step_single_add() {
-        let mut computer = Computer::new(vec![1, 0, 0, 0, 99]);
+        let input = std::io::stdin();
+        let output = std::io::stdout();
+        let mut computer = Computer::new(vec![1, 0, 0, 0, 99], &input, &output);
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
@@ -264,21 +308,27 @@ mod tests {
 
     #[test]
     fn test_step_single_mutiply() {
-        let mut computer = Computer::new(vec![2, 3, 0, 3, 99]);
+        let input = std::io::stdin();
+        let output = std::io::stdout();
+        let mut computer = Computer::new(vec![2, 3, 0, 3, 99], &input, &output);
         computer.step().is_ok();
         assert_eq!(vec![2, 3, 0, 6, 99], computer.memory);
     }
 
     #[test]
     fn test_step_single_mutiply_long() {
-        let mut computer = Computer::new(vec![2, 4, 4, 5, 99, 0]);
+        let input = std::io::stdin();
+        let output = std::io::stdout();
+        let mut computer = Computer::new(vec![2, 4, 4, 5, 99, 0], &input, &output);
         computer.step().is_ok();
         assert_eq!(vec![2, 4, 4, 5, 99, 9801], computer.memory);
     }
 
     #[test]
     fn test_run() {
-        let mut computer = Computer::new(vec![1, 1, 1, 4, 99, 5, 6, 0, 99]);
+        let input = std::io::stdin();
+        let output = std::io::stdout();
+        let mut computer = Computer::new(vec![1, 1, 1, 4, 99, 5, 6, 0, 99], &input, &output);
         assert_eq!(30, computer.run().unwrap());
     }
 }

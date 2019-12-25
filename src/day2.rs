@@ -8,6 +8,7 @@ use crate::intcode::Computer;
 
 pub fn run(filename: &PathBuf, part2: &bool) -> Result<(), Box<dyn Error>> {
     let mut initial_state = util::read_comma_separated_integers(File::open(filename)?)?;
+    let stdin = std::io::stdin();
 
     if *part2 {
         let target: i32 = 19690720;
@@ -17,7 +18,7 @@ pub fn run(filename: &PathBuf, part2: &bool) -> Result<(), Box<dyn Error>> {
                 let mut run_initial_state = initial_state.clone();
                 run_initial_state[1] = noun;
                 run_initial_state[2] = verb;
-                let mut computer = Computer::new(run_initial_state);
+                let mut computer = Computer::new(run_initial_state, stdin.lock(), std::io::stdout());
                 let result = computer.run();
 
                 match result {
@@ -34,7 +35,7 @@ pub fn run(filename: &PathBuf, part2: &bool) -> Result<(), Box<dyn Error>> {
         initial_state[1] = 12;
         initial_state[2] = 2;
 
-        let mut computer = Computer::new(initial_state);
+        let mut computer = Computer::new(initial_state, stdin.lock(), std::io::stdout());
 
         let result = computer.run();
         

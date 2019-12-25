@@ -39,5 +39,12 @@ pub enum Command {
         range_start: u32,
         /// The end of the range of possible values.
         range_end: u32,
-    }
+    },
+
+    /// Run a slightly more complex computer.
+    Day5 {
+        /// The name of the file to be used for input.
+        filename: PathBuf,
+    },
+
 }
