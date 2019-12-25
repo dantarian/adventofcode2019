@@ -3,7 +3,7 @@ use std::fmt;
 
 pub struct Computer<'a> {
     memory: Vec<i32>,
-    loc: i32,
+    loc: usize,
     running: bool,
     input: BufReader<Box<dyn BufRead + 'a>>,
     output: BufWriter<Box<dyn Write + 'a>>,
@@ -33,7 +33,7 @@ impl<'a> Computer<'a> {
     }
 
     fn step(&mut self) -> Result<(), String> {
-        let current_mem_value = self.memory.get(self.loc as usize);
+        let current_mem_value = self.memory.get(self.loc);
         let (instruction_code, argument_types) = match current_mem_value {
             Some(x) => match Computer::read_instruction_code(*x) {
                 Ok((a, b)) => (a, b),
@@ -46,7 +46,11 @@ impl<'a> Computer<'a> {
             .and_then(|i| i.call(&mut self.memory, &mut self.input, &mut self.output))
             .and_then(|result| match result {
                 CallResult::Step(distance) => {
-                    self.loc = self.loc + (distance as i32);
+                    self.loc = self.loc + distance;
+                    Ok(())
+                },
+                CallResult::Jump(target) => {
+                    self.loc = target;
                     Ok(())
                 },
                 CallResult::Stop => {
@@ -129,21 +133,26 @@ enum Instruction {
     Multiply(Argument, Argument, Argument),
     Input(Argument),
     Output(Argument),
+    JumpIfTrue(Argument, Argument),
+    JumpIfFalse(Argument, Argument),
+    LessThan(Argument, Argument, Argument),
+    Equals(Argument, Argument, Argument),
     Stop
 }
 
 #[derive(PartialEq, Eq, Debug)]
 enum CallResult {
-    Step(u32),
+    Step(usize),
+    Jump(usize),
     Stop
 }
 
 impl Instruction {
-    fn new(code: u32, base_location: i32, argument_types: Vec<ArgumentKind>, memory: &Vec<i32>) -> Result<Self, String> {
+    fn new(code: u32, base_location: usize, argument_types: Vec<ArgumentKind>, memory: &Vec<i32>) -> Result<Self, String> {
         let address = |x| *(memory.get(x as usize).unwrap());
         match code {
             1 => {
-                if base_location < 0 || (base_location as usize) + 3 > memory.len() {
+                if base_location + 3 > memory.len() {
                     return Err(String::from("Tried to read off end of memory."));
                 }
                 Ok(Instruction::Add(Argument::new(address(base_location + 1), argument_types.get(0)),
@@ -151,7 +160,7 @@ impl Instruction {
                                     Argument::new(address(base_location + 3), argument_types.get(2))))
             },
             2 => {
-                if base_location < 0 || (base_location as usize) + 3 > memory.len() {
+                if base_location + 3 > memory.len() {
                     return Err(String::from("Tried to read off end of memory."));
                 }
                 Ok(Instruction::Multiply(Argument::new(address(base_location + 1), argument_types.get(0)),
@@ -159,66 +168,146 @@ impl Instruction {
                                          Argument::new(address(base_location + 3), argument_types.get(2))))
             },
             3 => {
-                if base_location < 0 || (base_location as usize) + 1 > memory.len() {
+                if base_location + 1 > memory.len() {
                     return Err(String::from("Tried to read off end of memory."));
                 }
                 Ok(Instruction::Input(Argument::new(address(base_location + 1), argument_types.get(0))))
             },
             4 => {
-                if base_location < 0 || (base_location as usize) + 1 > memory.len() {
+                if base_location + 1 > memory.len() {
                     return Err(String::from("Tried to read off end of memory."));
                 }
                 Ok(Instruction::Output(Argument::new(address(base_location + 1), argument_types.get(0))))
+            },
+            5 => {
+                if base_location + 2 > memory.len() {
+                    return Err(String::from("Tried to read off end of memory."));
+                }
+                Ok(Instruction::JumpIfTrue(Argument::new(address(base_location + 1), argument_types.get(0)),
+                                           Argument::new(address(base_location + 2), argument_types.get(1))))
+            },
+            6 => {
+                if base_location + 2 > memory.len() {
+                    return Err(String::from("Tried to read off end of memory."));
+                }
+                Ok(Instruction::JumpIfFalse(Argument::new(address(base_location + 1), argument_types.get(0)),
+                                            Argument::new(address(base_location + 2), argument_types.get(1))))
+            },
+            7 => {
+                if base_location + 3 > memory.len() {
+                    return Err(String::from("Tried to read off end of memory."));
+                }
+                Ok(Instruction::LessThan(Argument::new(address(base_location + 1), argument_types.get(0)),
+                                         Argument::new(address(base_location + 2), argument_types.get(1)),
+                                         Argument::new(address(base_location + 3), argument_types.get(2))))
+            },
+            8 => {
+                if base_location + 3 > memory.len() {
+                    return Err(String::from("Tried to read off end of memory."));
+                }
+                Ok(Instruction::Equals(Argument::new(address(base_location + 1), argument_types.get(0)),
+                                       Argument::new(address(base_location + 2), argument_types.get(1)),
+                                       Argument::new(address(base_location + 3), argument_types.get(2))))
             },
             99 => Ok(Instruction::Stop),
             x => Err(format!("Unsupported instruction: {}", x))
         }
     }
 
-    fn length(&self) -> u32 {
+    fn length(&self) -> usize {
         match self {
             Instruction::Add(_,_,_) => 4,
             Instruction::Multiply(_,_,_) => 4,
             Instruction::Input(_) => 2,
             Instruction::Output(_) => 2,
+            Instruction::JumpIfTrue(_,_) => 3,
+            Instruction::JumpIfFalse(_,_) => 3,
+            Instruction::LessThan(_,_,_) => 4,
+            Instruction::Equals(_,_,_) => 4,
             Instruction::Stop => 0
         }
     }
 
     fn call<'a>(&self, memory: &mut Vec<i32>, reader: &mut BufReader<Box<dyn BufRead + 'a>>, writer: &mut BufWriter<Box<dyn Write + 'a>>) -> Result<CallResult, String> {
         match self {
-            Instruction::Add(input1, input2, output) => 
-                match (input1.get(memory), input2.get(memory)) {
-                    (Some(a), Some(b)) => {
-                        output.set(memory, a+b).and(Ok(CallResult::Step(self.length())))
-                    },
-                    _ => Err(String::from("Failed to find a referenced value."))
-                },
-            Instruction::Multiply(input1, input2, output) => 
-                match (input1.get(memory), input2.get(memory)) {
-                    (Some(a), Some(b)) => {
-                        output.set(memory, a*b).and(Ok(CallResult::Step(self.length())))
-                    },
-                    _ => Err(String::from("Failed to find a referenced value."))
-                },
-            Instruction::Input(output) => {
-                println!("Please provide an input:");
-                let mut buffer = String::new();
-                reader.read_line(&mut buffer).map_err(|err| err.to_string())?;
-                let value: i32 = buffer.trim().parse().map_err(|err: std::num::ParseIntError| err.to_string())?;
-                output.set(memory, value)?;
+            Instruction::Add(input1, input2, output) => self.add(input1, input2, output, memory),
+            Instruction::Multiply(input1, input2, output) => self.multiply(input1, input2, output, memory),
+            Instruction::Input(destination) => self.input(destination, memory, reader),
+            Instruction::Output(source) => self.output(source, memory, writer),
+            Instruction::JumpIfTrue(input, target) => self.jump_if_true(input, target, memory),
+            Instruction::JumpIfFalse(input, target) => self.jump_if_false(input, target, memory),
+            Instruction::LessThan(input1, input2, output) => self.less_than(input1, input2, output, memory),
+            Instruction::Equals(input1, input2, output) => self.equals(input1, input2, output, memory),
+            Instruction::Stop => Ok(CallResult::Stop),
+        }
+    }
+
+    fn add(&self, input1: &Argument, input2: &Argument, output: &Argument, memory: &mut Vec<i32>) -> Result<CallResult, String> {
+        match (input1.get(memory), input2.get(memory)) {
+            (Some(a), Some(b)) => output.set(memory, a+b).and(Ok(CallResult::Step(self.length()))),
+            _ => Err(String::from("Failed to find a referenced value."))
+        }    
+    }
+
+    fn multiply(&self, input1: &Argument, input2: &Argument, output: &Argument, memory: &mut Vec<i32>) -> Result<CallResult, String> {
+        match (input1.get(memory), input2.get(memory)) {
+            (Some(a), Some(b)) => output.set(memory, a*b).and(Ok(CallResult::Step(self.length()))),
+            _ => Err(String::from("Failed to find a referenced value."))
+        }
+    }
+
+    fn input<'a>(&self, destination: &Argument, memory: &mut Vec<i32>, reader: &mut BufReader<Box<dyn BufRead + 'a>>) -> Result<CallResult, String> {
+        println!("Please provide an input:");
+        let mut buffer = String::new();
+        reader.read_line(&mut buffer).map_err(|err| err.to_string())?;
+        let value: i32 = buffer.trim().parse().map_err(|err: std::num::ParseIntError| err.to_string())?;
+        destination.set(memory, value)?;
+        Ok(CallResult::Step(self.length()))
+    }
+
+    fn output<'a>(&self, source: &Argument, memory: &mut Vec<i32>, writer: &mut BufWriter<Box<dyn Write + 'a>>) -> Result<CallResult, String> {
+        match source.get(memory) {
+            Some(a) => {
+                writeln!(writer, "{}", a).map_err(|err| err.to_string())?;
                 Ok(CallResult::Step(self.length()))
             },
-            Instruction::Output(input) => {
-                match input.get(memory) {
-                    Some(a) => {
-                        writeln!(writer, "{}", a).map_err(|err| err.to_string())?;
-                        Ok(CallResult::Step(self.length()))
-                    },
-                    _ => Err(String::from("Failed to find a referenced value."))
-                }
+            _ => Err(String::from("Failed to find a referenced value."))
+        }
+    }
+
+    fn jump_if_true(&self, input: &Argument, target: &Argument, memory: &mut Vec<i32>) -> Result<CallResult, String> {
+        match input.get(memory) {
+            Some(a) if a != 0 => match target.get(memory) {
+                Some(b) => Ok(CallResult::Jump(b as usize)),
+                None => Err(String::from("Failed to find a referenced value."))
             },
-            Instruction::Stop => Ok(CallResult::Stop),
+            Some(_a) => Ok(CallResult::Step(self.length())),
+            None => Err(String::from("Failed to find a referenced value."))
+        }
+    }
+
+    fn jump_if_false(&self, input: &Argument, target: &Argument, memory: &mut Vec<i32>) -> Result<CallResult, String> {
+        match input.get(memory) {
+            Some(a) if a == 0 => match target.get(memory) {
+                Some(b) => Ok(CallResult::Jump(b as usize)),
+                None => Err(String::from("Failed to find a referenced value."))
+            },
+            Some(_a) => Ok(CallResult::Step(self.length())),
+            None => Err(String::from("Failed to find a referenced value."))
+        }
+    }
+    
+    fn less_than(&self, input1: &Argument, input2: &Argument, output: &Argument, memory: &mut Vec<i32>) -> Result<CallResult, String> {
+        match (input1.get(memory), input2.get(memory)) {
+            (Some(a), Some(b)) => output.set(memory, if a < b { 1 } else { 0 }).and(Ok(CallResult::Step(self.length()))),
+            _ => Err(String::from("Failed to find a referenced value."))
+        }
+    }
+
+    fn equals(&self, input1: &Argument, input2: &Argument, output: &Argument, memory: &mut Vec<i32>) -> Result<CallResult, String> {
+        match (input1.get(memory), input2.get(memory)) {
+            (Some(a), Some(b)) => output.set(memory, if a == b { 1 } else { 0 }).and(Ok(CallResult::Step(self.length()))),
+            _ => Err(String::from("Failed to find a referenced value."))
         }
     }
 }
@@ -298,8 +387,7 @@ mod tests {
     #[test]
     fn test_step_single_add() {
         let input = std::io::stdin();
-        let output = std::io::stdout();
-        let mut computer = Computer::new(vec![1, 0, 0, 0, 99], &input, &output);
+        let mut computer = Computer::new(vec![1, 0, 0, 0, 99], input.lock(), std::io::stdout());
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
@@ -309,26 +397,137 @@ mod tests {
     #[test]
     fn test_step_single_mutiply() {
         let input = std::io::stdin();
-        let output = std::io::stdout();
-        let mut computer = Computer::new(vec![2, 3, 0, 3, 99], &input, &output);
+        let mut computer = Computer::new(vec![2, 3, 0, 3, 99], input.lock(), std::io::stdout());
         computer.step().is_ok();
+        assert_eq!(4, computer.loc);
+        assert_eq!(true, computer.running);
         assert_eq!(vec![2, 3, 0, 6, 99], computer.memory);
     }
 
     #[test]
     fn test_step_single_mutiply_long() {
         let input = std::io::stdin();
-        let output = std::io::stdout();
-        let mut computer = Computer::new(vec![2, 4, 4, 5, 99, 0], &input, &output);
+        let mut computer = Computer::new(vec![2, 4, 4, 5, 99, 0], input.lock(), std::io::stdout());
         computer.step().is_ok();
+        assert_eq!(4, computer.loc);
+        assert_eq!(true, computer.running);
         assert_eq!(vec![2, 4, 4, 5, 99, 9801], computer.memory);
+    }
+
+    #[test]
+    fn test_step_jump_if_true_true() {
+        let input = std::io::stdin();
+        let mut computer = Computer::new(vec![1105, 1, 20], input.lock(), std::io::stdout());
+        computer.step().is_ok();
+        assert_eq!(20, computer.loc);
+        assert_eq!(true, computer.running);
+        assert_eq!(vec![1105, 1, 20], computer.memory);
+    }
+
+    #[test]
+    fn test_step_jump_if_true_true_positional() {
+        let input = std::io::stdin();
+        let mut computer = Computer::new(vec![5, 0, 2], input.lock(), std::io::stdout());
+        computer.step().is_ok();
+        assert_eq!(2, computer.loc);
+        assert_eq!(true, computer.running);
+        assert_eq!(vec![5, 0, 2], computer.memory);
+    }
+
+    #[test]
+    fn test_step_jump_if_true_false() {
+        let input = std::io::stdin();
+        let mut computer = Computer::new(vec![1105, 0, 20], input.lock(), std::io::stdout());
+        computer.step().is_ok();
+        assert_eq!(3, computer.loc);
+        assert_eq!(true, computer.running);
+        assert_eq!(vec![1105, 0, 20], computer.memory);
+    }
+
+    #[test]
+    fn test_step_jump_if_true_false_positional() {
+        let input = std::io::stdin();
+        let mut computer = Computer::new(vec![5, 3, 20, 0], input.lock(), std::io::stdout());
+        computer.step().is_ok();
+        assert_eq!(3, computer.loc);
+        assert_eq!(true, computer.running);
+        assert_eq!(vec![5, 3, 20, 0], computer.memory);
+    }
+
+    #[test]
+    fn test_step_jump_if_false_false() {
+        let input = std::io::stdin();
+        let mut computer = Computer::new(vec![1106, 0, 20], input.lock(), std::io::stdout());
+        computer.step().is_ok();
+        assert_eq!(20, computer.loc);
+        assert_eq!(true, computer.running);
+        assert_eq!(vec![1106, 0, 20], computer.memory);
+    }
+
+    #[test]
+    fn test_step_jump_if_false_false_positional() {
+        let input = std::io::stdin();
+        let mut computer = Computer::new(vec![6, 3, 3, 0], input.lock(), std::io::stdout());
+        computer.step().is_ok();
+        assert_eq!(0, computer.loc);
+        assert_eq!(true, computer.running);
+        assert_eq!(vec![6, 3, 3, 0], computer.memory);
+    }
+
+    #[test]
+    fn test_step_jump_if_false_true() {
+        let input = std::io::stdin();
+        let mut computer = Computer::new(vec![1106, 1, 20], input.lock(), std::io::stdout());
+        computer.step().is_ok();
+        assert_eq!(3, computer.loc);
+        assert_eq!(true, computer.running);
+        assert_eq!(vec![1106, 1, 20], computer.memory);
+    }
+
+    #[test]
+    fn test_step_less_than_true() {
+        let input = std::io::stdin();
+        let mut computer = Computer::new(vec![1107, -1, 0, 0], input.lock(), std::io::stdout());
+        computer.step().is_ok();
+        assert_eq!(4, computer.loc);
+        assert_eq!(true, computer.running);
+        assert_eq!(vec![1, -1, 0, 0], computer.memory);
+    }
+
+    #[test]
+    fn test_step_less_than_false() {
+        let input = std::io::stdin();
+        let mut computer = Computer::new(vec![1107, 10, 10, 0], input.lock(), std::io::stdout());
+        computer.step().is_ok();
+        assert_eq!(4, computer.loc);
+        assert_eq!(true, computer.running);
+        assert_eq!(vec![0, 10, 10, 0], computer.memory);
+    }
+
+    #[test]
+    fn test_step_equals_true() {
+        let input = std::io::stdin();
+        let mut computer = Computer::new(vec![1108, 42, 42, 0], input.lock(), std::io::stdout());
+        computer.step().is_ok();
+        assert_eq!(4, computer.loc);
+        assert_eq!(true, computer.running);
+        assert_eq!(vec![1, 42, 42, 0], computer.memory);
+    }
+
+    #[test]
+    fn test_step_equals_false() {
+        let input = std::io::stdin();
+        let mut computer = Computer::new(vec![1108, 42, 43, 0], input.lock(), std::io::stdout());
+        computer.step().is_ok();
+        assert_eq!(4, computer.loc);
+        assert_eq!(true, computer.running);
+        assert_eq!(vec![0, 42, 43, 0], computer.memory);
     }
 
     #[test]
     fn test_run() {
         let input = std::io::stdin();
-        let output = std::io::stdout();
-        let mut computer = Computer::new(vec![1, 1, 1, 4, 99, 5, 6, 0, 99], &input, &output);
+        let mut computer = Computer::new(vec![1, 1, 1, 4, 99, 5, 6, 0, 99], input.lock(), std::io::stdout());
         assert_eq!(30, computer.run().unwrap());
     }
 }

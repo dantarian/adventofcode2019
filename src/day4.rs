@@ -73,7 +73,7 @@ fn password_count2(digits_remaining: u32, min: &u32, max: &u32, previous_digit: 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    //use super::*;
 
     #[test]
     fn test_step_single_add() {
