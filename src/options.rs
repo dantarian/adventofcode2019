@@ -47,4 +47,10 @@ pub enum Command {
         filename: PathBuf,
     },
 
+    /// Orbital mechanics.
+    Day6 {
+        /// The name of the file to be used for input.
+        filename: PathBuf,
+    },
+
 }
