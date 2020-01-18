@@ -8,7 +8,14 @@ pub fn run(filename: &PathBuf, part2: &bool) -> Result<(), Box<dyn Error>> {
     let vec = read(File::open(filename)?)?;
     let pairs = extract_pairs(vec)?;
     let tree = build_tree(pairs)?;
-    println!("Orbits: {}", validate(tree));
+
+    if *part2 {
+        if let Some(x) = count_transfers(tree) {
+            println!("Orbital jumps: {}", x);
+        }
+    } else {
+        println!("Orbits: {}", validate(tree));
+    }
     Ok(()) 
 }
 
@@ -106,6 +113,16 @@ where
         self.arena.push(Node::new(idx, val));
         idx
     }
+
+    fn find_node(&self, val: T) -> Option<usize> {
+        for node in &self.arena {
+            if node.val == val {
+                return Some(node.idx.clone());
+            }
+        }
+
+        None
+    }
 }
 
 fn validate(tree: ArenaTree<String>) -> i32 {
@@ -125,6 +142,51 @@ fn validate(tree: ArenaTree<String>) -> i32 {
             }
         }
     })
+}
+
+fn count_transfers(tree: ArenaTree<String>) -> Option<i32> {
+    let you_path = path_to_com(&tree, String::from("YOU"));
+    let santa_path = path_to_com(&tree, String::from("SAN"));
+
+    if let Some(closest_shared_parent) = find_mutual_key_with_smallest_value(&you_path, &santa_path) {
+        Some(you_path.get(&closest_shared_parent).unwrap() + santa_path.get(&closest_shared_parent).unwrap())
+    } else {
+        None
+    }
+}
+
+fn path_to_com(tree: &ArenaTree<String>, start: String) -> HashMap<String, i32> {
+    let mut distance = 0;
+    let mut path = HashMap::new();
+    let mut node_idx_opt = (*tree).find_node(start);
+    
+    while let Some(node_idx) = node_idx_opt {
+        let node = &(tree.arena[node_idx]);
+        if let Some(parent_idx) = node.parent {
+            let parent_node = &(tree.arena[parent_idx]);
+            path.insert(parent_node.val.clone(), distance);
+            distance = distance + 1;
+            node_idx_opt = Some(parent_idx);
+        } else {
+            node_idx_opt = None
+        }
+    }
+
+    path
+}
+
+fn find_mutual_key_with_smallest_value(map1: &HashMap<String, i32>, map2: &HashMap<String, i32>) -> Option<String> {
+    let mut best_key = None;
+    let mut best_value = i32::max_value();
+
+    for (key, val) in (*map1).iter() {
+        if (*map2).contains_key(key) && *val < best_value {
+            best_key = Some(key.clone());
+            best_value = *val;
+        }
+    }
+
+    best_key
 }
 
 #[cfg(test)]
@@ -151,5 +213,58 @@ mod tests {
         let pairs = extract_pairs(vec![String::from("A)B"), String::from("COM)A")]).unwrap();
         let tree = build_tree(pairs).unwrap();
         assert_eq!(3, validate(tree));
+    }
+
+    #[test]
+    fn test_path_simple() {
+        let pairs = extract_pairs(vec![String::from("COM)YOU")]).unwrap();
+        let tree = build_tree(pairs).unwrap();
+        let path = path_to_com(&tree, String::from("YOU"));
+        assert_eq!(0, *path.get(&String::from("COM")).unwrap());
+    }
+
+    #[test]
+    fn test_path_two_steps() {
+        let pairs = extract_pairs(vec![String::from("COM)INT"),
+                                       String::from("INT)YOU")]).unwrap();
+        let tree = build_tree(pairs).unwrap();
+        let path = path_to_com(&tree, String::from("YOU"));
+        assert_eq!(0, *path.get(&String::from("INT")).unwrap());
+        assert_eq!(1, *path.get(&String::from("COM")).unwrap());
+    }
+
+    #[test]
+    fn test_common_key_with_smallest_value() {
+        let map1: HashMap<String, i32> = [
+            (String::from("A"), 1),
+            (String::from("B"), 2),
+            (String::from("C"), 3)].iter().cloned().collect();
+        let map2: HashMap<String, i32> = [
+            (String::from("A"), 4),
+            (String::from("C"), 5),
+            (String::from("D"), 6)].iter().cloned().collect();
+        assert_eq!(String::from("A"), find_mutual_key_with_smallest_value(&map1, &map2).unwrap());
+    }
+
+    #[test]
+    fn test_count_transfers() {
+        let input = vec![
+            "COM)B",
+            "B)C",
+            "C)D",
+            "D)E",
+            "E)F",
+            "B)G",
+            "G)H",
+            "D)I",
+            "E)J",
+            "J)K",
+            "K)L",
+            "K)YOU",
+            "I)SAN"
+        ].iter().map(|&x| String::from(x)).collect();
+        let pairs = extract_pairs(input).unwrap();
+        let tree = build_tree(pairs).unwrap();
+        assert_eq!(4, count_transfers(tree).unwrap());
     }
 }
