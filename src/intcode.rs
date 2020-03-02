@@ -1,27 +1,23 @@
-use std::io::{BufReader, BufWriter, BufRead, Write};
+use std::collections::VecDeque;
 use std::fmt;
 
-pub struct Computer<'a> {
+pub struct Computer {
     memory: Vec<i32>,
     loc: usize,
     running: bool,
-    input: BufReader<Box<dyn BufRead + 'a>>,
-    output: BufWriter<Box<dyn Write + 'a>>,
+    input: VecDeque<i32>,
+    output: VecDeque<i32>,
 }
 
-impl<'a> fmt::Debug for Computer<'a> {
+impl fmt::Debug for Computer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Memory: {:?} Location: {:?} Running: {:?}", self.memory, self.loc, self.running)
     }
 }
 
-impl<'a> Computer<'a> {
-    pub fn new<R: BufRead + 'a, W: Write + 'a>(memory: Vec<i32>, input: R, output: W) -> Self {
-        let r_box = Box::new(input);
-        let r_br = BufReader::new(r_box as _);
-        let w_box = Box::new(output);
-        let w_bw = BufWriter::new(w_box as _);
-        Computer { memory: memory, loc: 0, running: true, input: r_br, output: w_bw }
+impl Computer {
+    pub fn new(memory: Vec<i32>, input: VecDeque<i32>) -> Self {
+        Computer { memory: memory, loc: 0, running: true, input: input, output: VecDeque::new() }
     }
 
     pub fn run(&mut self) -> Result<i32, String> {
@@ -87,6 +83,10 @@ impl<'a> Computer<'a> {
             Some(a) => Ok(a.clone()),
             _ => Err(String::from("Empty memory!"))
         }
+    }
+
+    pub fn output(&self) -> VecDeque<i32> {
+        self.output.clone()
     }
 }
 
@@ -228,7 +228,7 @@ impl Instruction {
         }
     }
 
-    fn call<'a>(&self, memory: &mut Vec<i32>, reader: &mut BufReader<Box<dyn BufRead + 'a>>, writer: &mut BufWriter<Box<dyn Write + 'a>>) -> Result<CallResult, String> {
+    fn call<'a>(&self, memory: &mut Vec<i32>, reader: &mut VecDeque<i32>, writer: &mut VecDeque<i32>) -> Result<CallResult, String> {
         match self {
             Instruction::Add(input1, input2, output) => self.add(input1, input2, output, memory),
             Instruction::Multiply(input1, input2, output) => self.multiply(input1, input2, output, memory),
@@ -256,22 +256,23 @@ impl Instruction {
         }
     }
 
-    fn input<'a>(&self, destination: &Argument, memory: &mut Vec<i32>, reader: &mut BufReader<Box<dyn BufRead + 'a>>) -> Result<CallResult, String> {
-        println!("Please provide an input:");
-        let mut buffer = String::new();
-        reader.read_line(&mut buffer).map_err(|err| err.to_string())?;
-        let value: i32 = buffer.trim().parse().map_err(|err: std::num::ParseIntError| err.to_string())?;
-        destination.set(memory, value)?;
-        Ok(CallResult::Step(self.length()))
-    }
-
-    fn output<'a>(&self, source: &Argument, memory: &mut Vec<i32>, writer: &mut BufWriter<Box<dyn Write + 'a>>) -> Result<CallResult, String> {
-        match source.get(memory) {
-            Some(a) => {
-                writeln!(writer, "{}", a).map_err(|err| err.to_string())?;
+    fn input<'a>(&self, destination: &Argument, memory: &mut Vec<i32>, input: &mut VecDeque<i32>) -> Result<CallResult, String> {
+        match input.pop_front() {
+            Some(value) => {
+                destination.set(memory, value)?;
                 Ok(CallResult::Step(self.length()))
             },
-            _ => Err(String::from("Failed to find a referenced value."))
+            None => Err(String::from("Failed to find an input value."))
+        }
+    }
+
+    fn output<'a>(&self, source: &Argument, memory: &mut Vec<i32>, output: &mut VecDeque<i32>) -> Result<CallResult, String> {
+        match source.get(memory) {
+            Some(value) => {
+                output.push_back(value);
+                Ok(CallResult::Step(self.length()))
+            },
+            None => Err(String::from("Failed to find a referenced value."))
         }
     }
 
@@ -386,8 +387,7 @@ mod tests {
 
     #[test]
     fn test_step_single_add() {
-        let input = std::io::stdin();
-        let mut computer = Computer::new(vec![1, 0, 0, 0, 99], input.lock(), std::io::stdout());
+        let mut computer = Computer::new(vec![1, 0, 0, 0, 99], VecDeque::new());
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
@@ -396,8 +396,7 @@ mod tests {
 
     #[test]
     fn test_step_single_mutiply() {
-        let input = std::io::stdin();
-        let mut computer = Computer::new(vec![2, 3, 0, 3, 99], input.lock(), std::io::stdout());
+        let mut computer = Computer::new(vec![2, 3, 0, 3, 99], VecDeque::new());
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
@@ -406,18 +405,37 @@ mod tests {
 
     #[test]
     fn test_step_single_mutiply_long() {
-        let input = std::io::stdin();
-        let mut computer = Computer::new(vec![2, 4, 4, 5, 99, 0], input.lock(), std::io::stdout());
+        let mut computer = Computer::new(vec![2, 4, 4, 5, 99, 0], VecDeque::new());
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
         assert_eq!(vec![2, 4, 4, 5, 99, 9801], computer.memory);
     }
+    
+    #[test]
+    fn test_step_input() {
+        let mut input = VecDeque::new();
+        input.push_back(42);
+        let mut computer = Computer::new(vec![3, 2, 0], input);
+        computer.step().is_ok();
+        assert_eq!(2, computer.loc);
+        assert_eq!(true, computer.running);
+        assert_eq!(vec![3, 2, 42], computer.memory);
+    }
+
+    #[test]
+    fn test_step_output() {
+        let mut computer = Computer::new(vec![4, 2, 42], VecDeque::new());
+        computer.step().is_ok();
+        assert_eq!(2, computer.loc);
+        assert_eq!(true, computer.running);
+        assert_eq!(vec![4, 2, 42], computer.memory);
+        assert_eq!(vec![42], Vec::from(computer.output));
+    }
 
     #[test]
     fn test_step_jump_if_true_true() {
-        let input = std::io::stdin();
-        let mut computer = Computer::new(vec![1105, 1, 20], input.lock(), std::io::stdout());
+        let mut computer = Computer::new(vec![1105, 1, 20], VecDeque::new());
         computer.step().is_ok();
         assert_eq!(20, computer.loc);
         assert_eq!(true, computer.running);
@@ -426,8 +444,7 @@ mod tests {
 
     #[test]
     fn test_step_jump_if_true_true_positional() {
-        let input = std::io::stdin();
-        let mut computer = Computer::new(vec![5, 0, 2], input.lock(), std::io::stdout());
+        let mut computer = Computer::new(vec![5, 0, 2], VecDeque::new());
         computer.step().is_ok();
         assert_eq!(2, computer.loc);
         assert_eq!(true, computer.running);
@@ -436,8 +453,7 @@ mod tests {
 
     #[test]
     fn test_step_jump_if_true_false() {
-        let input = std::io::stdin();
-        let mut computer = Computer::new(vec![1105, 0, 20], input.lock(), std::io::stdout());
+        let mut computer = Computer::new(vec![1105, 0, 20], VecDeque::new());
         computer.step().is_ok();
         assert_eq!(3, computer.loc);
         assert_eq!(true, computer.running);
@@ -446,8 +462,7 @@ mod tests {
 
     #[test]
     fn test_step_jump_if_true_false_positional() {
-        let input = std::io::stdin();
-        let mut computer = Computer::new(vec![5, 3, 20, 0], input.lock(), std::io::stdout());
+        let mut computer = Computer::new(vec![5, 3, 20, 0], VecDeque::new());
         computer.step().is_ok();
         assert_eq!(3, computer.loc);
         assert_eq!(true, computer.running);
@@ -456,8 +471,7 @@ mod tests {
 
     #[test]
     fn test_step_jump_if_false_false() {
-        let input = std::io::stdin();
-        let mut computer = Computer::new(vec![1106, 0, 20], input.lock(), std::io::stdout());
+        let mut computer = Computer::new(vec![1106, 0, 20], VecDeque::new());
         computer.step().is_ok();
         assert_eq!(20, computer.loc);
         assert_eq!(true, computer.running);
@@ -466,8 +480,7 @@ mod tests {
 
     #[test]
     fn test_step_jump_if_false_false_positional() {
-        let input = std::io::stdin();
-        let mut computer = Computer::new(vec![6, 3, 3, 0], input.lock(), std::io::stdout());
+        let mut computer = Computer::new(vec![6, 3, 3, 0], VecDeque::new());
         computer.step().is_ok();
         assert_eq!(0, computer.loc);
         assert_eq!(true, computer.running);
@@ -476,8 +489,7 @@ mod tests {
 
     #[test]
     fn test_step_jump_if_false_true() {
-        let input = std::io::stdin();
-        let mut computer = Computer::new(vec![1106, 1, 20], input.lock(), std::io::stdout());
+        let mut computer = Computer::new(vec![1106, 1, 20], VecDeque::new());
         computer.step().is_ok();
         assert_eq!(3, computer.loc);
         assert_eq!(true, computer.running);
@@ -486,8 +498,7 @@ mod tests {
 
     #[test]
     fn test_step_less_than_true() {
-        let input = std::io::stdin();
-        let mut computer = Computer::new(vec![1107, -1, 0, 0], input.lock(), std::io::stdout());
+        let mut computer = Computer::new(vec![1107, -1, 0, 0], VecDeque::new());
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
@@ -496,8 +507,7 @@ mod tests {
 
     #[test]
     fn test_step_less_than_false() {
-        let input = std::io::stdin();
-        let mut computer = Computer::new(vec![1107, 10, 10, 0], input.lock(), std::io::stdout());
+        let mut computer = Computer::new(vec![1107, 10, 10, 0], VecDeque::new());
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
@@ -506,8 +516,7 @@ mod tests {
 
     #[test]
     fn test_step_equals_true() {
-        let input = std::io::stdin();
-        let mut computer = Computer::new(vec![1108, 42, 42, 0], input.lock(), std::io::stdout());
+        let mut computer = Computer::new(vec![1108, 42, 42, 0], VecDeque::new());
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
@@ -516,8 +525,7 @@ mod tests {
 
     #[test]
     fn test_step_equals_false() {
-        let input = std::io::stdin();
-        let mut computer = Computer::new(vec![1108, 42, 43, 0], input.lock(), std::io::stdout());
+        let mut computer = Computer::new(vec![1108, 42, 43, 0], VecDeque::new());
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
@@ -526,8 +534,7 @@ mod tests {
 
     #[test]
     fn test_run() {
-        let input = std::io::stdin();
-        let mut computer = Computer::new(vec![1, 1, 1, 4, 99, 5, 6, 0, 99], input.lock(), std::io::stdout());
+        let mut computer = Computer::new(vec![1, 1, 1, 4, 99, 5, 6, 0, 99], VecDeque::new());
         assert_eq!(30, computer.run().unwrap());
     }
 }

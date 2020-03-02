@@ -53,4 +53,9 @@ pub enum Command {
         filename: PathBuf,
     },
 
+    /// Amplifier shenanigans
+    Day7 {
+        /// The name of the file to be used for inuput.
+        filename: PathBuf,
+    },
 }
