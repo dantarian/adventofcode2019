@@ -20,7 +20,7 @@ pub fn run(filename: &PathBuf, part2: &bool) -> Result<(), Box<dyn Error>> {
         match result {
             Ok(_) => {
                 println!("Output:");
-                for value in computer.output().unwrap() {
+                for value in computer.output() {
                     println!("{}", value);
                 }
                 Ok(())
@@ -40,7 +40,7 @@ pub fn run(filename: &PathBuf, part2: &bool) -> Result<(), Box<dyn Error>> {
         match result {
             Ok(_) => {
                 println!("Output:");
-                for value in computer.output().unwrap() {
+                for value in computer.output() {
                     println!("{}", value);
                 }
                 Ok(())

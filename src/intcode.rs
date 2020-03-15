@@ -18,6 +18,7 @@ pub struct Computer {
     running: bool,
     input: ComputerInput,
     output: ComputerOutput,
+    alt_output: VecDeque<i32>,
 }
 
 impl fmt::Debug for Computer {
@@ -38,7 +39,8 @@ impl Computer {
             loc: 0, 
             running: true, 
             input: input.unwrap_or(ComputerInput::Queue(VecDeque::new())),
-            output: output.unwrap_or(ComputerOutput::Queue(VecDeque::new()))
+            output: output.unwrap_or(ComputerOutput::Queue(VecDeque::new())),
+            alt_output: VecDeque::new(),
         }
     }
 
@@ -61,7 +63,7 @@ impl Computer {
         };
 
         Instruction::new(instruction_code, self.loc, argument_types, &self.memory)
-            .and_then(|i| i.call(&mut self.memory, &mut self.input, &mut self.output))
+            .and_then(|i| i.call(&mut self.memory, &mut self.input, &mut self.output, &mut self.alt_output))
             .and_then(|result| match result {
                 CallResult::Step(distance) => {
                     self.loc = self.loc + distance;
@@ -107,10 +109,10 @@ impl Computer {
         }
     }
 
-    pub fn output(&self) -> Result<VecDeque<i32>, String> {
+    pub fn output(&self) -> VecDeque<i32> {
         match &self.output {
-            ComputerOutput::Queue(q) => Ok(q.clone()),
-            ComputerOutput::Channel(_) => Err(String::from("Cannot request output from computer with channel-based output."))
+            ComputerOutput::Queue(q) => q.clone(),
+            ComputerOutput::Channel(_) => self.alt_output.clone()
         }
     }
 }
@@ -253,12 +255,12 @@ impl Instruction {
         }
     }
 
-    fn call<'a>(&self, memory: &mut Vec<i32>, reader: &mut ComputerInput, writer: &mut ComputerOutput) -> Result<CallResult, String> {
+    fn call<'a>(&self, memory: &mut Vec<i32>, reader: &mut ComputerInput, writer: &mut ComputerOutput, alt_output: &mut VecDeque<i32>) -> Result<CallResult, String> {
         match self {
             Instruction::Add(input1, input2, output) => self.add(input1, input2, output, memory),
             Instruction::Multiply(input1, input2, output) => self.multiply(input1, input2, output, memory),
             Instruction::Input(destination) => self.input(destination, memory, reader),
-            Instruction::Output(source) => self.output(source, memory, writer),
+            Instruction::Output(source) => self.output(source, memory, writer, alt_output),
             Instruction::JumpIfTrue(input, target) => self.jump_if_true(input, target, memory),
             Instruction::JumpIfFalse(input, target) => self.jump_if_false(input, target, memory),
             Instruction::LessThan(input1, input2, output) => self.less_than(input1, input2, output, memory),
@@ -300,16 +302,18 @@ impl Instruction {
         }
     }
 
-    fn output<'a>(&self, source: &Argument, memory: &mut Vec<i32>, output: &mut ComputerOutput) -> Result<CallResult, String> {
+    fn output<'a>(&self, source: &Argument, memory: &mut Vec<i32>, output: &mut ComputerOutput, alt_output: &mut VecDeque<i32>) -> Result<CallResult, String> {
         match source.get(memory) {
             Some(value) => {
                 match output {
                     ComputerOutput::Queue(q) => q.push_back(value),
                     ComputerOutput::Channel(tx) => match tx.send(value) {
-                        Err(_) => println!("No receiver for output - value is: {}", value),
+                        Err(_) => {
+                            alt_output.push_back(value);
+                        },
                         _ => ()
                     }
-                }
+                };
                 Ok(CallResult::Step(self.length()))
             },
             None => Err(String::from("Failed to find a referenced value."))
@@ -358,9 +362,6 @@ mod tests {
     use super::*;
     use std::sync::mpsc::sync_channel;
     use std::thread;
-    use std::io::Read;
-    use gag::BufferRedirect;
-    use serial_test::serial;
 
     #[test]
     fn test_new_instruction_add() {
@@ -511,23 +512,14 @@ mod tests {
     }
 
     #[test]
-    #[serial] // We're capturing STDOUT, so we don't want anything else running in parallel.
     fn test_step_output_with_channel_no_receiver() {
-        let (tx, _) = sync_channel(0);
-        let mut buf = BufferRedirect::stdout().unwrap();
-
-        let handle = thread::spawn(move || {
-            let mut computer = Computer::new(vec![4, 2, 42], None, Some(ComputerOutput::Channel(tx)));
-            computer.step().is_ok();
-            assert_eq!(2, computer.loc);
-            assert_eq!(vec![4, 2, 42], computer.memory);
-        });
-
-        handle.join().unwrap();
-
-        let mut output = String::new();
-        buf.read_to_string(&mut output).unwrap();
-        assert_eq!("No receiver for output - value is: 42\n", &output[..]);
+        let (tx, rx) = sync_channel(0);
+        drop(rx);
+        let mut computer = Computer::new(vec![4, 2, 43], None, Some(ComputerOutput::Channel(tx)));
+        computer.step().is_ok();
+        assert_eq!(2, computer.loc);
+        assert_eq!(vec![4, 2, 43], computer.memory);
+        assert_eq!(43, computer.output().pop_front().unwrap());
     }
 
     #[test]
