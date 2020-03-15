@@ -5,7 +5,7 @@ use std::fs::File;
 use std::process;
 
 use crate::util;
-use crate::intcode::Computer;
+use crate::intcode::{Computer, ComputerInput};
 
 pub fn run(filename: &PathBuf, part2: &bool) -> Result<(), Box<dyn Error>> {
     let initial_state = util::read_comma_separated_integers(File::open(filename)?)?;
@@ -13,14 +13,14 @@ pub fn run(filename: &PathBuf, part2: &bool) -> Result<(), Box<dyn Error>> {
     if *part2 {
         let mut input = VecDeque::new();
         input.push_back(5);
-        let mut computer = Computer::new(initial_state, input);
+        let mut computer = Computer::new(initial_state, Some(ComputerInput::Queue(input)), None);
 
         let result = computer.run();
         
         match result {
             Ok(_) => {
                 println!("Output:");
-                for value in computer.output() {
+                for value in computer.output().unwrap() {
                     println!("{}", value);
                 }
                 Ok(())
@@ -33,14 +33,14 @@ pub fn run(filename: &PathBuf, part2: &bool) -> Result<(), Box<dyn Error>> {
     } else {
         let mut input = VecDeque::new();
         input.push_back(1);
-        let mut computer = Computer::new(initial_state, input);
+        let mut computer = Computer::new(initial_state, Some(ComputerInput::Queue(input)), None);
 
         let result = computer.run();
         
         match result {
             Ok(_) => {
                 println!("Output:");
-                for value in computer.output() {
+                for value in computer.output().unwrap() {
                     println!("{}", value);
                 }
                 Ok(())

@@ -7,7 +7,7 @@ use std::process;
 use itertools::Itertools;
 
 use crate::util;
-use crate::intcode::Computer;
+use crate::intcode::{Computer, ComputerInput, ComputerOutput};
 
 pub fn run(filename: &PathBuf, part2: &bool) -> Result<(), Box<dyn Error>> {
     let initial_state = util::read_comma_separated_integers(File::open(filename)?)?;
@@ -23,10 +23,10 @@ pub fn run(filename: &PathBuf, part2: &bool) -> Result<(), Box<dyn Error>> {
             let mut result = 0;
             for phase in permutation {
                 let input = VecDeque::from(vec![phase, result]);
-                let mut computer = Computer::new(initial_state.clone(), input);
+                let mut computer = Computer::new(initial_state.clone(), Some(ComputerInput::Queue(input)), None);
                 match computer.run() {
                     Ok(_) => {
-                        match computer.output().pop_front() {
+                        match computer.output().unwrap().pop_front() {
                             Some(element) => { result = element; },
                             None => {
                                 eprintln!("No output found from computer!");

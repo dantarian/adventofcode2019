@@ -1,12 +1,23 @@
 use std::collections::VecDeque;
 use std::fmt;
+use std::sync::mpsc::{SyncSender, Receiver};
+
+pub enum ComputerOutput {
+    Queue(VecDeque<i32>),
+    Channel(SyncSender<i32>)
+}
+
+pub enum ComputerInput {
+    Queue(VecDeque<i32>),
+    Channel(Receiver<i32>)
+}
 
 pub struct Computer {
     memory: Vec<i32>,
     loc: usize,
     running: bool,
-    input: VecDeque<i32>,
-    output: VecDeque<i32>,
+    input: ComputerInput,
+    output: ComputerOutput,
 }
 
 impl fmt::Debug for Computer {
@@ -16,8 +27,19 @@ impl fmt::Debug for Computer {
 }
 
 impl Computer {
-    pub fn new(memory: Vec<i32>, input: VecDeque<i32>) -> Self {
-        Computer { memory: memory, loc: 0, running: true, input: input, output: VecDeque::new() }
+    /// Creates a new Computer.
+    ///
+    /// The function takes the intial memory state for the computer, plus an optional input and
+    /// output. An empty queue is used as the default for input and output, if no alternative is
+    /// supplied.
+    pub fn new(memory: Vec<i32>, input: Option<ComputerInput>, output: Option<ComputerOutput>) -> Self {
+        Computer { 
+            memory: memory, 
+            loc: 0, 
+            running: true, 
+            input: input.unwrap_or(ComputerInput::Queue(VecDeque::new())),
+            output: output.unwrap_or(ComputerOutput::Queue(VecDeque::new()))
+        }
     }
 
     pub fn run(&mut self) -> Result<i32, String> {
@@ -85,8 +107,11 @@ impl Computer {
         }
     }
 
-    pub fn output(&self) -> VecDeque<i32> {
-        self.output.clone()
+    pub fn output(&self) -> Result<VecDeque<i32>, String> {
+        match &self.output {
+            ComputerOutput::Queue(q) => Ok(q.clone()),
+            ComputerOutput::Channel(_) => Err(String::from("Cannot request output from computer with channel-based output."))
+        }
     }
 }
 
@@ -228,7 +253,7 @@ impl Instruction {
         }
     }
 
-    fn call<'a>(&self, memory: &mut Vec<i32>, reader: &mut VecDeque<i32>, writer: &mut VecDeque<i32>) -> Result<CallResult, String> {
+    fn call<'a>(&self, memory: &mut Vec<i32>, reader: &mut ComputerInput, writer: &mut ComputerOutput) -> Result<CallResult, String> {
         match self {
             Instruction::Add(input1, input2, output) => self.add(input1, input2, output, memory),
             Instruction::Multiply(input1, input2, output) => self.multiply(input1, input2, output, memory),
@@ -256,20 +281,35 @@ impl Instruction {
         }
     }
 
-    fn input<'a>(&self, destination: &Argument, memory: &mut Vec<i32>, input: &mut VecDeque<i32>) -> Result<CallResult, String> {
-        match input.pop_front() {
-            Some(value) => {
-                destination.set(memory, value)?;
-                Ok(CallResult::Step(self.length()))
+    fn input<'a>(&self, destination: &Argument, memory: &mut Vec<i32>, input: &mut ComputerInput) -> Result<CallResult, String> {
+        match input {
+            ComputerInput::Queue(q) => match q.pop_front() {
+                Some(value) => {
+                    destination.set(memory, value)?;
+                    Ok(CallResult::Step(self.length()))
+                },
+                None => Err(String::from("Failed to find an input value."))
             },
-            None => Err(String::from("Failed to find an input value."))
+            ComputerInput::Channel(rx) => match rx.recv() {
+                Ok(val) => {
+                    destination.set(memory, val)?;
+                    Ok(CallResult::Step(self.length()))
+                },
+                Err(_) => Err(String::from("Failed to receive an input value."))
+            }
         }
     }
 
-    fn output<'a>(&self, source: &Argument, memory: &mut Vec<i32>, output: &mut VecDeque<i32>) -> Result<CallResult, String> {
+    fn output<'a>(&self, source: &Argument, memory: &mut Vec<i32>, output: &mut ComputerOutput) -> Result<CallResult, String> {
         match source.get(memory) {
             Some(value) => {
-                output.push_back(value);
+                match output {
+                    ComputerOutput::Queue(q) => q.push_back(value),
+                    ComputerOutput::Channel(tx) => match tx.send(value) {
+                        Err(_) => println!("No receiver for output - value is: {}", value),
+                        _ => ()
+                    }
+                }
                 Ok(CallResult::Step(self.length()))
             },
             None => Err(String::from("Failed to find a referenced value."))
@@ -316,6 +356,11 @@ impl Instruction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::sync_channel;
+    use std::thread;
+    use std::io::Read;
+    use gag::BufferRedirect;
+    use serial_test::serial;
 
     #[test]
     fn test_new_instruction_add() {
@@ -387,7 +432,7 @@ mod tests {
 
     #[test]
     fn test_step_single_add() {
-        let mut computer = Computer::new(vec![1, 0, 0, 0, 99], VecDeque::new());
+        let mut computer = Computer::new(vec![1, 0, 0, 0, 99], None, None);
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
@@ -396,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_step_single_mutiply() {
-        let mut computer = Computer::new(vec![2, 3, 0, 3, 99], VecDeque::new());
+        let mut computer = Computer::new(vec![2, 3, 0, 3, 99], None, None);
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
@@ -405,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_step_single_mutiply_long() {
-        let mut computer = Computer::new(vec![2, 4, 4, 5, 99, 0], VecDeque::new());
+        let mut computer = Computer::new(vec![2, 4, 4, 5, 99, 0], None, None);
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
@@ -416,7 +461,22 @@ mod tests {
     fn test_step_input() {
         let mut input = VecDeque::new();
         input.push_back(42);
-        let mut computer = Computer::new(vec![3, 2, 0], input);
+        let mut computer = Computer::new(vec![3, 2, 0], Some(ComputerInput::Queue(input)), None);
+        computer.step().is_ok();
+        assert_eq!(2, computer.loc);
+        assert_eq!(true, computer.running);
+        assert_eq!(vec![3, 2, 42], computer.memory);
+    }
+
+    #[test]
+    fn test_step_input_with_channel() {
+        let (tx, rx) = sync_channel(0);
+
+        thread::spawn(move || {
+            tx.send(42).unwrap();
+        });
+
+        let mut computer = Computer::new(vec![3, 2, 0], Some(ComputerInput::Channel(rx)), None);
         computer.step().is_ok();
         assert_eq!(2, computer.loc);
         assert_eq!(true, computer.running);
@@ -425,17 +485,54 @@ mod tests {
 
     #[test]
     fn test_step_output() {
-        let mut computer = Computer::new(vec![4, 2, 42], VecDeque::new());
+        let mut computer = Computer::new(vec![4, 2, 42], None, None);
         computer.step().is_ok();
         assert_eq!(2, computer.loc);
         assert_eq!(true, computer.running);
         assert_eq!(vec![4, 2, 42], computer.memory);
-        assert_eq!(vec![42], Vec::from(computer.output));
+        assert_eq!(vec![42], Vec::from(match computer.output {
+            ComputerOutput::Queue(q) => q,
+            _ => VecDeque::new()
+        }));
+    }
+
+    #[test]
+    fn test_step_output_with_channel() {
+        let (tx, rx) = sync_channel(0);
+
+        thread::spawn(move || {
+            let mut computer = Computer::new(vec![4, 2, 42], None, Some(ComputerOutput::Channel(tx)));
+            computer.step().is_ok();
+            assert_eq!(2, computer.loc);
+            assert_eq!(vec![4, 2, 42], computer.memory);
+        });
+
+        assert_eq!(42, rx.recv().unwrap());
+    }
+
+    #[test]
+    #[serial] // We're capturing STDOUT, so we don't want anything else running in parallel.
+    fn test_step_output_with_channel_no_receiver() {
+        let (tx, _) = sync_channel(0);
+        let mut buf = BufferRedirect::stdout().unwrap();
+
+        let handle = thread::spawn(move || {
+            let mut computer = Computer::new(vec![4, 2, 42], None, Some(ComputerOutput::Channel(tx)));
+            computer.step().is_ok();
+            assert_eq!(2, computer.loc);
+            assert_eq!(vec![4, 2, 42], computer.memory);
+        });
+
+        handle.join().unwrap();
+
+        let mut output = String::new();
+        buf.read_to_string(&mut output).unwrap();
+        assert_eq!("No receiver for output - value is: 42\n", &output[..]);
     }
 
     #[test]
     fn test_step_jump_if_true_true() {
-        let mut computer = Computer::new(vec![1105, 1, 20], VecDeque::new());
+        let mut computer = Computer::new(vec![1105, 1, 20], None, None);
         computer.step().is_ok();
         assert_eq!(20, computer.loc);
         assert_eq!(true, computer.running);
@@ -444,7 +541,7 @@ mod tests {
 
     #[test]
     fn test_step_jump_if_true_true_positional() {
-        let mut computer = Computer::new(vec![5, 0, 2], VecDeque::new());
+        let mut computer = Computer::new(vec![5, 0, 2], None, None);
         computer.step().is_ok();
         assert_eq!(2, computer.loc);
         assert_eq!(true, computer.running);
@@ -453,7 +550,7 @@ mod tests {
 
     #[test]
     fn test_step_jump_if_true_false() {
-        let mut computer = Computer::new(vec![1105, 0, 20], VecDeque::new());
+        let mut computer = Computer::new(vec![1105, 0, 20], None, None);
         computer.step().is_ok();
         assert_eq!(3, computer.loc);
         assert_eq!(true, computer.running);
@@ -462,7 +559,7 @@ mod tests {
 
     #[test]
     fn test_step_jump_if_true_false_positional() {
-        let mut computer = Computer::new(vec![5, 3, 20, 0], VecDeque::new());
+        let mut computer = Computer::new(vec![5, 3, 20, 0], None, None);
         computer.step().is_ok();
         assert_eq!(3, computer.loc);
         assert_eq!(true, computer.running);
@@ -471,7 +568,7 @@ mod tests {
 
     #[test]
     fn test_step_jump_if_false_false() {
-        let mut computer = Computer::new(vec![1106, 0, 20], VecDeque::new());
+        let mut computer = Computer::new(vec![1106, 0, 20], None, None);
         computer.step().is_ok();
         assert_eq!(20, computer.loc);
         assert_eq!(true, computer.running);
@@ -480,7 +577,7 @@ mod tests {
 
     #[test]
     fn test_step_jump_if_false_false_positional() {
-        let mut computer = Computer::new(vec![6, 3, 3, 0], VecDeque::new());
+        let mut computer = Computer::new(vec![6, 3, 3, 0], None, None);
         computer.step().is_ok();
         assert_eq!(0, computer.loc);
         assert_eq!(true, computer.running);
@@ -489,7 +586,7 @@ mod tests {
 
     #[test]
     fn test_step_jump_if_false_true() {
-        let mut computer = Computer::new(vec![1106, 1, 20], VecDeque::new());
+        let mut computer = Computer::new(vec![1106, 1, 20], None, None);
         computer.step().is_ok();
         assert_eq!(3, computer.loc);
         assert_eq!(true, computer.running);
@@ -498,7 +595,7 @@ mod tests {
 
     #[test]
     fn test_step_less_than_true() {
-        let mut computer = Computer::new(vec![1107, -1, 0, 0], VecDeque::new());
+        let mut computer = Computer::new(vec![1107, -1, 0, 0], None, None);
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
@@ -507,7 +604,7 @@ mod tests {
 
     #[test]
     fn test_step_less_than_false() {
-        let mut computer = Computer::new(vec![1107, 10, 10, 0], VecDeque::new());
+        let mut computer = Computer::new(vec![1107, 10, 10, 0], None, None);
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
@@ -516,7 +613,7 @@ mod tests {
 
     #[test]
     fn test_step_equals_true() {
-        let mut computer = Computer::new(vec![1108, 42, 42, 0], VecDeque::new());
+        let mut computer = Computer::new(vec![1108, 42, 42, 0], None, None);
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
@@ -525,7 +622,7 @@ mod tests {
 
     #[test]
     fn test_step_equals_false() {
-        let mut computer = Computer::new(vec![1108, 42, 43, 0], VecDeque::new());
+        let mut computer = Computer::new(vec![1108, 42, 43, 0], None, None);
         computer.step().is_ok();
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
@@ -534,7 +631,7 @@ mod tests {
 
     #[test]
     fn test_run() {
-        let mut computer = Computer::new(vec![1, 1, 1, 4, 99, 5, 6, 0, 99], VecDeque::new());
+        let mut computer = Computer::new(vec![1, 1, 1, 4, 99, 5, 6, 0, 99], None, None);
         assert_eq!(30, computer.run().unwrap());
     }
 }
