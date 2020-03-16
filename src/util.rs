@@ -11,4 +11,10 @@ pub fn read_comma_separated_integers<R: Read>(io: R) -> Result<Vec<i32>, std::io
     .collect()
 }
 
-
+pub fn read_digits<R:Read>(io: R) -> Vec<u8> {
+    io.bytes()
+        .filter_map(|r| r.ok())
+        .filter(|&x| x >= b'0' && x <= b'9')
+        .map(|x| x - 48)
+        .collect()
+}

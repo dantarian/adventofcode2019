@@ -58,4 +58,10 @@ pub enum Command {
         /// The name of the file to be used for inuput.
         filename: PathBuf,
     },
+
+    /// Image processing
+    Day8 {
+        /// The name of the file to be used for input.
+        filename: PathBuf,
+    },
 }

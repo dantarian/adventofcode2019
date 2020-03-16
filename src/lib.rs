@@ -8,6 +8,7 @@ pub mod day4;
 pub mod day5;
 pub mod day6;
 pub mod day7;
+pub mod day8;
 pub mod util;
 pub mod intcode;
 use options::Opt;
@@ -22,6 +23,7 @@ pub fn run(opt: Opt) -> Result<(), Box<dyn Error>> {
         Command::Day5 { filename } => day5::run(&filename, &opt.part2),
         Command::Day6 { filename } => day6::run(&filename, &opt.part2),
         Command::Day7 { filename } => day7::run(&filename, &opt.part2),
+        Command::Day8 { filename } => day8::run(&filename, &opt.part2),
     }
 }
 
