@@ -19,6 +19,7 @@ pub struct Computer {
     input: ComputerInput,
     output: ComputerOutput,
     alt_output: VecDeque<i32>,
+    relative_base: i32,
 }
 
 impl fmt::Debug for Computer {
@@ -41,6 +42,7 @@ impl Computer {
             input: input.unwrap_or(ComputerInput::Queue(VecDeque::new())),
             output: output.unwrap_or(ComputerOutput::Queue(VecDeque::new())),
             alt_output: VecDeque::new(),
+            relative_base: 0
         }
     }
 
@@ -62,8 +64,8 @@ impl Computer {
             None => return Err(format!("Current location {} is out of range.", self.loc))
         };
 
-        Instruction::new(instruction_code, self.loc, argument_types, &self.memory)
-            .and_then(|i| i.call(&mut self.memory, &mut self.input, &mut self.output, &mut self.alt_output))
+        Instruction::new(instruction_code, self.loc, argument_types, &self.memory, self.relative_base)
+            .and_then(|i| i.call(&mut self.memory, &mut self.input, &mut self.output, &mut self.alt_output, &mut self.relative_base))
             .and_then(|result| match result {
                 CallResult::Step(distance) => {
                     self.loc = self.loc + distance;
@@ -92,13 +94,14 @@ impl Computer {
         }
 
         let prefix = (abs_code / 100).to_string();
-        if !prefix.chars().all(|x| x == '0' || x == '1') {
+        if !prefix.chars().all(|x| x == '0' || x == '1' || x == '2') {
             return Err(format!("Unrecognised opcode format: {}", code));
         }
         
         Ok(((code % 100) as u32, (code.abs() / 100).to_string().chars().rfold(vec![], |mut acc, x| match x {
             '0' => { acc.push(ArgumentKind::Position); acc },
-            _ => { acc.push(ArgumentKind::Immediate); acc }
+            '1' => { acc.push(ArgumentKind::Immediate); acc },
+            _ => { acc.push(ArgumentKind::Relative); acc }
         })))
     }
 
@@ -120,24 +123,27 @@ impl Computer {
 #[derive(PartialEq, Eq, Debug, Clone)]
 enum ArgumentKind {
     Position,
-    Immediate
+    Immediate,
+    Relative
 }
 
 #[derive(PartialEq, Eq, Debug)]
 struct Argument {
     value: i32,
-    kind: ArgumentKind
+    kind: ArgumentKind,
+    relative_base: i32
 }
 
 impl Argument {
-    fn new(value: i32, kind: Option<&ArgumentKind>) -> Self {
-        Argument { value: value, kind: kind.cloned().unwrap_or(ArgumentKind::Position) }
+    fn new(value: i32, kind: Option<&ArgumentKind>, relative_base: i32) -> Self {
+        Argument { value: value, kind: kind.cloned().unwrap_or(ArgumentKind::Position), relative_base: relative_base }
     }
 
     fn get<'a>(&self, memory: &'a Vec<i32>) -> Option<i32> {
         match self.kind {
             ArgumentKind::Immediate => Some(self.value.clone()),
-            ArgumentKind::Position => memory.get(self.value as usize).cloned()
+            ArgumentKind::Position => memory.get(self.value as usize).cloned(),
+            ArgumentKind::Relative => memory.get((self.value + self.relative_base) as usize).cloned()
         }
     }
 
@@ -148,6 +154,12 @@ impl Argument {
                 match memory.get_mut(self.value as usize) {
                     Some(element) => { *element = new_value; Ok(()) },
                     None => Err(format!("Memory index out of bounds: {}", self.value))
+                }
+            },
+            ArgumentKind::Relative => {
+                match memory.get_mut((self.value + self.relative_base) as usize) {
+                    Some(element) => { *element = new_value; Ok(()) },
+                    None => Err(format!("Memory index out of bounds: {}", self.value + self.relative_base))
                 }
             }
         }
@@ -164,6 +176,7 @@ enum Instruction {
     JumpIfFalse(Argument, Argument),
     LessThan(Argument, Argument, Argument),
     Equals(Argument, Argument, Argument),
+    AdjustRelativeBase(Argument),
     Stop
 }
 
@@ -175,66 +188,72 @@ enum CallResult {
 }
 
 impl Instruction {
-    fn new(code: u32, base_location: usize, argument_types: Vec<ArgumentKind>, memory: &Vec<i32>) -> Result<Self, String> {
+    fn new(code: u32, base_location: usize, argument_types: Vec<ArgumentKind>, memory: &Vec<i32>, relative_base: i32) -> Result<Self, String> {
         let address = |x| *(memory.get(x as usize).unwrap());
         match code {
             1 => {
                 if base_location + 3 > memory.len() {
                     return Err(String::from("Tried to read off end of memory."));
                 }
-                Ok(Instruction::Add(Argument::new(address(base_location + 1), argument_types.get(0)),
-                                    Argument::new(address(base_location + 2), argument_types.get(1)),
-                                    Argument::new(address(base_location + 3), argument_types.get(2))))
+                Ok(Instruction::Add(Argument::new(address(base_location + 1), argument_types.get(0), relative_base),
+                                    Argument::new(address(base_location + 2), argument_types.get(1), relative_base),
+                                    Argument::new(address(base_location + 3), argument_types.get(2), relative_base)))
             },
             2 => {
                 if base_location + 3 > memory.len() {
                     return Err(String::from("Tried to read off end of memory."));
                 }
-                Ok(Instruction::Multiply(Argument::new(address(base_location + 1), argument_types.get(0)),
-                                         Argument::new(address(base_location + 2), argument_types.get(1)),
-                                         Argument::new(address(base_location + 3), argument_types.get(2))))
+                Ok(Instruction::Multiply(Argument::new(address(base_location + 1), argument_types.get(0), relative_base),
+                                         Argument::new(address(base_location + 2), argument_types.get(1), relative_base),
+                                         Argument::new(address(base_location + 3), argument_types.get(2), relative_base)))
             },
             3 => {
                 if base_location + 1 > memory.len() {
                     return Err(String::from("Tried to read off end of memory."));
                 }
-                Ok(Instruction::Input(Argument::new(address(base_location + 1), argument_types.get(0))))
+                Ok(Instruction::Input(Argument::new(address(base_location + 1), argument_types.get(0), relative_base)))
             },
             4 => {
                 if base_location + 1 > memory.len() {
                     return Err(String::from("Tried to read off end of memory."));
                 }
-                Ok(Instruction::Output(Argument::new(address(base_location + 1), argument_types.get(0))))
+                Ok(Instruction::Output(Argument::new(address(base_location + 1), argument_types.get(0), relative_base)))
             },
             5 => {
                 if base_location + 2 > memory.len() {
                     return Err(String::from("Tried to read off end of memory."));
                 }
-                Ok(Instruction::JumpIfTrue(Argument::new(address(base_location + 1), argument_types.get(0)),
-                                           Argument::new(address(base_location + 2), argument_types.get(1))))
+                Ok(Instruction::JumpIfTrue(Argument::new(address(base_location + 1), argument_types.get(0), relative_base),
+                                           Argument::new(address(base_location + 2), argument_types.get(1), relative_base)))
             },
             6 => {
                 if base_location + 2 > memory.len() {
                     return Err(String::from("Tried to read off end of memory."));
                 }
-                Ok(Instruction::JumpIfFalse(Argument::new(address(base_location + 1), argument_types.get(0)),
-                                            Argument::new(address(base_location + 2), argument_types.get(1))))
+                Ok(Instruction::JumpIfFalse(Argument::new(address(base_location + 1), argument_types.get(0), relative_base),
+                                            Argument::new(address(base_location + 2), argument_types.get(1), relative_base)))
             },
             7 => {
                 if base_location + 3 > memory.len() {
                     return Err(String::from("Tried to read off end of memory."));
                 }
-                Ok(Instruction::LessThan(Argument::new(address(base_location + 1), argument_types.get(0)),
-                                         Argument::new(address(base_location + 2), argument_types.get(1)),
-                                         Argument::new(address(base_location + 3), argument_types.get(2))))
+                Ok(Instruction::LessThan(Argument::new(address(base_location + 1), argument_types.get(0), relative_base),
+                                         Argument::new(address(base_location + 2), argument_types.get(1), relative_base),
+                                         Argument::new(address(base_location + 3), argument_types.get(2), relative_base)))
             },
             8 => {
                 if base_location + 3 > memory.len() {
                     return Err(String::from("Tried to read off end of memory."));
                 }
-                Ok(Instruction::Equals(Argument::new(address(base_location + 1), argument_types.get(0)),
-                                       Argument::new(address(base_location + 2), argument_types.get(1)),
-                                       Argument::new(address(base_location + 3), argument_types.get(2))))
+                Ok(Instruction::Equals(Argument::new(address(base_location + 1), argument_types.get(0), relative_base),
+                                       Argument::new(address(base_location + 2), argument_types.get(1), relative_base),
+                                       Argument::new(address(base_location + 3), argument_types.get(2), relative_base)))
+            },
+            9 => {
+                if base_location + 1 > memory.len() {
+                    return Err(String::from("Tried to read off end of memory."));
+                }
+                Ok(Instruction::AdjustRelativeBase(Argument::new(address(base_location + 1), argument_types.get(0), relative_base)))
             },
             99 => Ok(Instruction::Stop),
             x => Err(format!("Unsupported instruction: {}", x))
@@ -251,11 +270,17 @@ impl Instruction {
             Instruction::JumpIfFalse(_,_) => 3,
             Instruction::LessThan(_,_,_) => 4,
             Instruction::Equals(_,_,_) => 4,
+            Instruction::AdjustRelativeBase(_) => 2,
             Instruction::Stop => 0
         }
     }
 
-    fn call<'a>(&self, memory: &mut Vec<i32>, reader: &mut ComputerInput, writer: &mut ComputerOutput, alt_output: &mut VecDeque<i32>) -> Result<CallResult, String> {
+    fn call<'a>(&self, 
+                memory: &mut Vec<i32>, 
+                reader: &mut ComputerInput, 
+                writer: &mut ComputerOutput, 
+                alt_output: &mut VecDeque<i32>,
+                relative_base: &mut i32) -> Result<CallResult, String> {
         match self {
             Instruction::Add(input1, input2, output) => self.add(input1, input2, output, memory),
             Instruction::Multiply(input1, input2, output) => self.multiply(input1, input2, output, memory),
@@ -265,6 +290,7 @@ impl Instruction {
             Instruction::JumpIfFalse(input, target) => self.jump_if_false(input, target, memory),
             Instruction::LessThan(input1, input2, output) => self.less_than(input1, input2, output, memory),
             Instruction::Equals(input1, input2, output) => self.equals(input1, input2, output, memory),
+            Instruction::AdjustRelativeBase(input) => self.adjust_relative_base(input, memory, relative_base),
             Instruction::Stop => Ok(CallResult::Stop),
         }
     }
@@ -355,6 +381,16 @@ impl Instruction {
             _ => Err(String::from("Failed to find a referenced value."))
         }
     }
+
+    fn adjust_relative_base(&self, input: &Argument, memory: &mut Vec<i32>, relative_base: &mut i32) -> Result<CallResult, String> {
+        match input.get(memory) {
+            Some(a) => {
+                *relative_base = *relative_base + a;
+                Ok(CallResult::Step(self.length()))
+            },
+            None => Err(String::from("Failed to find a referenced value."))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -365,39 +401,39 @@ mod tests {
 
     #[test]
     fn test_new_instruction_add() {
-        let instruction = Instruction::new(1, 0, vec![ArgumentKind::Position, ArgumentKind::Immediate], &vec![1, 2, 3, 4]).unwrap();
-        assert_eq!(Instruction::Add(Argument { value: 2, kind: ArgumentKind::Position },
-                                    Argument { value: 3, kind: ArgumentKind::Immediate },
-                                    Argument { value: 4, kind: ArgumentKind::Position }),
+        let instruction = Instruction::new(1, 0, vec![ArgumentKind::Position, ArgumentKind::Immediate], &vec![1, 2, 3, 4], 0).unwrap();
+        assert_eq!(Instruction::Add(Argument { value: 2, kind: ArgumentKind::Position, relative_base: 0},
+                                    Argument { value: 3, kind: ArgumentKind::Immediate, relative_base: 0},
+                                    Argument { value: 4, kind: ArgumentKind::Position, relative_base: 0 }),
                    instruction);
     }
 
     #[test]
     fn test_new_instruction_mutiply() {
-        let instruction = Instruction::new(2, 1, vec![ArgumentKind::Position, ArgumentKind::Immediate], &vec![3, 4, 5, 6, 7]).unwrap();
-        assert_eq!(Instruction::Multiply(Argument { value: 5, kind: ArgumentKind::Position },
-                                         Argument { value: 6, kind: ArgumentKind::Immediate },
-                                         Argument { value: 7, kind: ArgumentKind::Position }),
+        let instruction = Instruction::new(2, 1, vec![ArgumentKind::Position, ArgumentKind::Immediate], &vec![3, 4, 5, 6, 7], 0).unwrap();
+        assert_eq!(Instruction::Multiply(Argument { value: 5, kind: ArgumentKind::Position, relative_base: 0 },
+                                         Argument { value: 6, kind: ArgumentKind::Immediate, relative_base: 0 },
+                                         Argument { value: 7, kind: ArgumentKind::Position, relative_base: 0 }),
                    instruction);
     }
 
     #[test]
     fn test_new_instruction_stop() {
-        let instruction = Instruction::new(99, 0, vec![], &vec![]).unwrap();
+        let instruction = Instruction::new(99, 0, vec![], &vec![], 0).unwrap();
         assert_eq!(Instruction::Stop,
                    instruction);
     }
 
     #[test]
     fn test_positional_argument_get() {
-        let argument = Argument::new(3, Some(&ArgumentKind::Position));
+        let argument = Argument::new(3, Some(&ArgumentKind::Position), 0);
         let result = argument.get(&vec![11, 12, 13, 14]).unwrap();
         assert_eq!(14, result);
     }
 
     #[test]
     fn test_positional_argument_set() {
-        let argument = Argument::new(3, Some(&ArgumentKind::Position));
+        let argument = Argument::new(3, Some(&ArgumentKind::Position), 0);
         let mut memory = vec![11, 12, 13, 14];
         argument.set(&mut memory, 42).unwrap();
         assert_eq!(vec![11, 12, 13, 42], memory);
@@ -405,8 +441,15 @@ mod tests {
 
     #[test]
     fn test_immediate_argument_get() {
-        let argument = Argument::new(3, Some(&ArgumentKind::Immediate));
+        let argument = Argument::new(3, Some(&ArgumentKind::Immediate), 0);
         let result = argument.get(&vec![11, 12, 13, 14]).unwrap();
+        assert_eq!(3, result);
+    }
+
+    #[test]
+    fn test_relative_argument_get() {
+        let argument = Argument::new(1, Some(&ArgumentKind::Relative), 1);
+        let result = argument.get(&vec![1, 2, 3, 4]).unwrap();
         assert_eq!(3, result);
     }
 
@@ -429,6 +472,13 @@ mod tests {
         let (instruction_code, argument_kinds) = Computer::read_instruction_code(1001).unwrap();
         assert_eq!(1, instruction_code);
         assert_eq!(vec![ArgumentKind::Position, ArgumentKind::Immediate], argument_kinds);
+    }
+
+    #[test]
+    fn test_read_instruction_code_2001() {
+        let (instruction_code, argument_kinds) = Computer::read_instruction_code(2001).unwrap();
+        assert_eq!(1, instruction_code);
+        assert_eq!(vec![ArgumentKind::Position, ArgumentKind::Relative], argument_kinds);
     }
 
     #[test]
@@ -619,6 +669,13 @@ mod tests {
         assert_eq!(4, computer.loc);
         assert_eq!(true, computer.running);
         assert_eq!(vec![0, 42, 43, 0], computer.memory);
+    }
+
+    #[test]
+    fn test_adjust_relative_base() {
+        let mut computer = Computer::new(vec![109, -7], None, None);
+        computer.step().is_ok();
+        assert_eq!(-7, computer.relative_base);
     }
 
     #[test]
