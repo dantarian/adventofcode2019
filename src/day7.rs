@@ -104,7 +104,7 @@ pub fn run(filename: &PathBuf, part2: &bool) -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn make_computer(initial_state: Vec<i32>, input: Receiver<i32>, output: SyncSender<i32>) -> Computer {
+fn make_computer(initial_state: Vec<i32>, input: Receiver<i32>, output: SyncSender<i32>) -> Computer<i32> {
     Computer::new(initial_state, Some(ComputerInput::Channel(input)), Some(ComputerOutput::Channel(output)))
 }
 

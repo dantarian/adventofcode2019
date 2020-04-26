@@ -4,9 +4,18 @@ version = "0.1.0"
 authors = ["Warren Jones <warren@pencethren.org>"]
 edition = "2018"
 
+[lib]
+name = "adventlib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "adventbin"
+path = "src/main.rs"
+
 [dependencies]
 structopt = { version = "0.3" }
 itertools = { version = "0.9.0" }
+num = { version = "0.2.1" }
 
 [dev-dependencies]
 gag = { version = "0.1.10" }
