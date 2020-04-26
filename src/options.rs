@@ -64,4 +64,10 @@ pub enum Command {
         /// The name of the file to be used for input.
         filename: PathBuf,
     },
+
+    /// 64-bit Intcode
+    Day9 {
+        /// The name of the file to be used for input.
+        filename: PathBuf,
+    }
 }
