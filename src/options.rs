@@ -69,5 +69,11 @@ pub enum Command {
     Day9 {
         /// The name of the file to be used for input.
         filename: PathBuf,
-    }
+    },
+
+    /// Asteroids
+    Day10 {
+        /// The name of the file to be used for input.
+        filename: PathBuf,        
+    },
 }
