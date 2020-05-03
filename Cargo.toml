@@ -20,4 +20,5 @@ num = { version = "0.2.1" }
 [dev-dependencies]
 gag = { version = "0.1.10" }
 serial_test = { version = "0.3.2" }
+assert_approx_eq = "1.1.0"
 
